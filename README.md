@@ -1,12 +1,12 @@
-# OrbitSight — Neuromorphic Event-Based RSO Detection and Tracking
+# OrbitSight — Neuromorphic Event-Based RSO Detection
 
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![mAP@0.5](https://img.shields.io/badge/mAP%400.5%20all--21-0.284406-success.svg)](#benchmark-performance)
-[![Compute p99](https://img.shields.io/badge/compute%20p99%20%3C%2040%20ms-18%20of%2021-blue.svg)](#real-time-performance)
+[![Compute p99](https://img.shields.io/badge/compute%20p99%20%3C%2040%20ms-15%20of%2017%20train-blue.svg)](#real-time-performance)
 [![CPU only](https://img.shields.io/badge/CPU--only-no%20GPU%2C%20no%20network-informational.svg)](#docker-submission-container)
 
-**OrbitSight** detects and tracks resident space objects (RSOs) — satellites and orbital debris in LEO, MEO and GEO — in neuromorphic event-camera recordings from the Abu Dhabi Quantum Optical Ground Station's 0.8 m telescope. It runs on CPU, fully offline, with no neural network.
+**OrbitSight** detects resident space objects (RSOs) — satellites and orbital debris in LEO, MEO and GEO — in neuromorphic event-camera recordings from the Abu Dhabi Quantum Optical Ground Station's 0.8 m telescope. It runs on CPU, fully offline, with no neural network.
 
 > **Naming.** The system is **OrbitSight**. This repository is named `OrbitAI` because that is the registered team name for the TII OrbitSight Challenge. Both names refer to the same artifact.
 
@@ -49,7 +49,7 @@ The core difficulty is not classification capacity. It is **ranking a very small
 
 Four passes over each 40 ms event window:
 
-**Pass 1 — proposal.** Events are accumulated into a 2D count map. Adaptive percentile thresholding escalates with window density (capped at 99.0) so bright frames do not flood the component stage. `cv2.connectedComponentsWithStats` yields components, ranked by event count and truncated at 64 per window; oversized components are re-thresholded and split. A continuous static-source map — the fraction of windows in which each pixel is active — suppresses stars and hot pixels.
+**Pass 1 — proposal.** Events are accumulated into a 2D count map. Adaptive percentile thresholding escalates with window density (capped at 99.0) so bright frames do not flood the component stage. `cv2.connectedComponentsWithStats` yields components, ranked by event count and truncated at 64 per window; oversized components are re-thresholded and split. A continuous static-source map — the fraction of windows in which each pixel is active — suppresses stars and hot pixels. This map is accumulated over the whole recording before inference, which makes it a per-sequence calibration step rather than a causal streaming one; it is built outside the latency timer, and that deviation from strict streaming operation is disclosed rather than implied.
 
 **Pass 2 — candidate scoring.** Candidates are matched to the previous and next windows by centroid distance to produce a persistence count; single-window candidates are dropped. Thirteen features per candidate feed a `HistGradientBoostingClassifier` trained on **944,504 candidates** (6,977 positives, 937,527 negatives), validation **ROC-AUC 0.930**.
 
@@ -142,25 +142,30 @@ python -m src.latency_bench --dataset-dir ../OrbitSight_Dataset/Training_sets --
 
 ## Real-time performance
 
-Measured with a dedicated streaming benchmark timing the **full** per-window pipeline — proposal, feature extraction, both classifiers, NMS, confidence gating, top-K and box regression — over five independent repetitions, excluding 20 warmup windows per sequence.
+Measured with a dedicated streaming benchmark (`src/latency_bench.py`) over five independent repetitions, excluding 20 warmup windows per sequence, in an environment pinned to the container's dependency versions.
 
-| Compute p99 per window | Sequences |
+**What the benchmark does and does not time.** Inside the timer: window slicing, proposal generation, temporal association, 13-D candidate features, the Pass 2 candidate classifier, the 21-D window objectness gate, gated fusion, NMS, the confidence floor and top-K selection. Outside the timer: model loading, and construction of the continuous static-activity map. **Not exercised at all:** the Pass 4 box regressor and the `local_bg` feature, because the benchmark passes `count_img=None` and never loads the regressor. The figures below therefore characterise Passes 1 to 3 of the shipped pipeline, not the complete submitted path. Bringing the benchmark onto the submitted code path is the first item of post-submission work, and the gap is recorded in [`CHALLENGE_REQUIREMENTS.md`](./CHALLENGE_REQUIREMENTS.md).
+
+| Metric, 17 training sequences | Result |
 |---|---|
-| < 40 ms | **18 of 21** (nominal) |
-| < 40 ms, excluding runs with σ > 25% of mean | **17 of 21** |
-| < 40 ms, training split | **15 of 17**, up from 6 of 17 |
+| Compute p99 < 40 ms | **15 of 17**, up from 6 of 17 |
+| Compute **maximum** < 40 ms | **2 of 17** |
+| End-to-end p99 < 40 ms | **0 of 17** — see latency semantics below |
 
-Best case is **14.99 ± 0.1 ms** (`DAVIS_Filtered_NOAA6`). Three sequences exceed the budget:
+Best case is **14.17 ± 0.0 ms** compute p99 (`DAVIS_Filtered_NOAA6`), whose measured maximum is **18.65 ± 2.0 ms**. Two training sequences exceed the p99 budget:
 
-| Sequence | Compute p99 | Cause |
-|---|---|---|
-| `DVX_NOAA6_11416` | 84.67 ms | Densest stream, 22M raw events |
-| `EVK4_mag7.3` | 77.76 ms | Highest resolution; worst case in every measurement taken |
-| `EVK4_mag5.2` | 58.73 ms | Highest resolution |
+| Sequence | Compute p99 | Compute max | Cause |
+|---|---|---|---|
+| `DVX_NOAA6_11416` | 137.74 ± 52.3 ms | 704.16 ± 337.5 ms | Densest stream; five isolated system stalls above 1 s |
+| `EVK4_mag5.2` | 61.90 ± 4.0 ms | 246.58 ± 73.4 ms | Highest resolution |
+
+Measured at `--reps 5 --warmup-windows 20`. These figures are warmup-sensitive: at `--reps 1 --warmup-windows 5`, `EVK4_mag5.2` measures 102.98 ms compute p99 rather than 61.90 ms. Any latency figure taken from this repository should be quoted together with its repetition and warmup counts.
+
+Only **2 of 17** sequences hold their per-window *maximum* under 40 ms. Maxima measured on a preemptive general-purpose operating system include scheduler interference and are not a property of the algorithm alone, but they are reported because a per-window deadline is what a streaming deployment actually faces. The four test sequences are excluded from this table: configuration selection used the training split only, and no per-sequence latency figure is quoted for data held out from selection.
 
 **Disclosure.** The 6-of-17 → 15-of-17 improvement is attributable to replacing a per-window-materialising static-source map with a constant-memory accumulator — **not** to the box regressor, whose marginal cost is two vectorised `predict()` calls per sequence. Total container wall clock is 48.08 min (2,885.18 s), higher than the 23.26 min baseline: the constant-memory map trades total throughput for bounded memory and improved tail latency. Since the challenge scores per-window latency and imposes no wall-clock limit, we consider this the correct trade.
 
-**Latency semantics.** With one window of lookahead, end-to-end latency is one 40 ms window period plus compute. We report compute p99 because it determines whether the system keeps pace with the sensor; the window period is inherent to the formulation.
+**Latency semantics.** The pipeline uses one window of lookahead, so a detection for window *t* cannot be emitted until window *t+1* has arrived. End-to-end latency is therefore one 40 ms window period plus compute, which means **this system does not meet a literal "under 40 ms end-to-end" target and cannot do so without abandoning the lookahead.** The causal-variant ablation below quantifies that cost: 16.1% of overall training mAP and 48.0% of sparse-track mAP. We report compute p99 because it determines whether the system keeps pace with the sensor, and we state the end-to-end position explicitly rather than letting the compute figure stand in for it.
 
 **Run invariants.** 143,750 windows processed, 16,955 predictions emitted, 22,368 ground-truth boxes, resident memory 114.3–130.7 MB across all 21 sequences.
 
@@ -189,7 +194,7 @@ To quantify the value of the disclosed 1-window lookahead, a strictly causal var
 
 ![EVK4 detection example](experiments/frames/fig1.png)
 
-EVK4 window, cropped. Green: ground truth. Orange: prediction with confidence and track ID. Rendered by `src/visualize.py`, which ships inside the submitted container.
+EVK4 window, cropped. Green: ground truth. Orange: prediction with confidence. Rendered by `src/visualize.py`, which ships inside the submitted container. The renderer will also draw track identifiers when a prediction file supplies them, but the submitted pipeline emits none; see Known limitations.
 
 ---
 
@@ -223,7 +228,12 @@ For each candidate bounding box:
 ├── run.sh                      # Container entrypoint
 ├── requirements.txt            # Eight pinned runtime dependencies
 ├── AGENTS.md                   # Operating protocol and validation rules
+├── CHALLENGE_REQUIREMENTS.md   # Requirement-by-requirement compliance ledger
+├── LICENSE                     # MIT
+├── .dockerignore               # Build context exclusions
+├── configs/                    # Alternate configurations (grid.yaml, pre_geometry.yaml)
 ├── PROPOSAL.md                 # Technical proposal source
+├── PROPOSAL.pdf                # Five-page submitted proposal
 ├── models/
 │   ├── scorer_pregeom.joblib                   # Pass 2 candidate classifier (359,304 B)
 │   ├── scorer_objectness_pre_geometry.joblib   # Pass 3 window objectness gate (525,648 B)
@@ -232,6 +242,8 @@ For each candidate bounding box:
 │   └── model_structure.json                    # Model metadata and hyperparameters
 ├── experiments/
 │   ├── CONFIG_LEDGER.md        # Every configuration evaluated, with commit SHA
+│   ├── BOX_CEILING.md          # Box-geometry recall ceiling analysis
+│   ├── RECALL_FINDINGS.md      # Recall loss attribution findings
 │   ├── release_notes_v1.0.md   # Submission artifact provenance
 │   ├── convert_pdf.py          # PROPOSAL.md -> HTML
 │   ├── inspect_pdf.ps1         # HTML -> PDF with layout gates
@@ -243,7 +255,7 @@ For each candidate bounding box:
     ├── static_map.py           # Continuous background activity map
     ├── features.py             # Vectorized 13-D candidate feature extraction
     ├── nms.py                  # IoU-based non-maximum suppression
-    ├── tracker.py              # Multi-window track association and ID maintenance
+    ├── tracker.py              # Track association; used only by train_reranker.py, not on the shipped path
     ├── pipeline.py             # Streaming processing engine
     ├── infer.py                # Batch dataset CLI inference and latency logging
     ├── metrics.py              # Canonical IoU and precision-recall metrics
@@ -362,6 +374,22 @@ Across all 21 sequences (143,750 windows):
 | Release tag | `v1.0-submission` |
 | Archive | 188,539,903 bytes gzipped / 582,660,096 bytes raw |
 | SHA-256 | `7bb765b28dd8e600c4f82969fadfd1449a3b4c57f5cbd76749bb2e323c12c722` |
+
+---
+
+## Known limitations
+
+Stated here rather than left for a reviewer to discover. The full ledger, with a verdict against every published requirement, is in [`CHALLENGE_REQUIREMENTS.md`](./CHALLENGE_REQUIREMENTS.md).
+
+- **Tracking is not integrated into the submitted path.** `src/tracker.py` implements multi-window track association and is used to train the reranker, but neither `src/infer.py`, `src/pipeline.py` nor `run.sh` invokes it. The submitted container emits per-window detections with no persistent identity. This repository previously claimed tracking in its title; it no longer does.
+- **The latency benchmark does not exercise the box regressor or the `local_bg` feature.** Published compute p99 figures characterise Passes 1 to 3, not the complete submitted path.
+- **End-to-end latency exceeds 40 ms by construction**, because of the one-window lookahead.
+- **Per-window maximum latency is under 40 ms on only 2 of 17 training sequences**, against 15 of 17 at p99.
+- **Model weights were pickled under scikit-learn 1.9.0 while `requirements.txt` pins 1.5.1.** The models load and reproduce their published metrics, but loading emits `InconsistentVersionWarning` for `LabelEncoder`, `_BinMapper` and `HistGradientBoostingClassifier`. This is a reproducibility liability. It is deliberately not repinned before the submission deadline, because repinning would require rebuilding and revalidating frozen weights.
+- **The static-activity map is accumulated over the whole recording**, making it a per-sequence calibration step rather than a causal one.
+- **The EVK4 box-regressor head had no validation sequence in the holdout**, which makes the EVK4 per-sensor figure the least independently supported number here.
+- **`models/box_regressor_arm1.joblib` is not tracked**, so the published Arm 1 negative result is not reproducible from a fresh clone without retraining.
+- **No ablation of alternative model architectures has been run.** The four-arm ablation compares box-sizing strategies within one architecture; it does not compare this architecture against a spiking, graph or hybrid event-frame model.
 
 ---
 
