@@ -124,6 +124,9 @@ A visualisation tool renders annotated video at all three sensor resolutions wit
 <img src="experiments/frames/fig2_pipeline.png">
 **Figure 2.** The shipped pipeline; counts and AUCs are the measured values from sections 2 and 4.
 
+<img src="experiments/frames/fig3_training_curves.png">
+**Figure 3.** Training and validation curves for all four learned heads over 391 iterations. Markers show the best validation iteration selected by early stopping.
+
 **Failure taxonomy.** Every one of the 15,292 ground-truth windows in the training split was classified against the shipped predictions, giving an exhaustive partition rather than a selected sample:
 
 | Outcome | Windows | Share |
@@ -132,6 +135,11 @@ A visualisation tool renders annotated video at all three sensor resolutions wit
 | Missed entirely — no prediction emitted | 4,389 | 28.7% |
 | Localised but insufficient overlap (0 < IoU < 0.5) | 3,874 | 25.3% |
 | Predicted in the wrong place (IoU = 0) | 78 | 0.5% |
+
+<img src="experiments/frames/fig4a_miss.png">
+<img src="experiments/frames/fig4b_localise.png">
+<img src="experiments/frames/fig4c_confuse.png">
+**Figure 4.** One representative window per failure class. (a) missed detection, `DAVIS_COSMOS1933`; (b) localisation failure at IoU 0.361, `EVK4_mag5.2`; (c) mislocated prediction, `DAVIS_EGS_16908`.
 
 The partition cross-validates against the reported counts: the three failure classes sum to 8,341, exactly the reported false-negative total. Median IoU in the localisation-failure class is 0.361 — these are near-misses against a hard 0.5 threshold, not gross errors.
 
