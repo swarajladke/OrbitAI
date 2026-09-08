@@ -29,19 +29,25 @@ The in-process metrics harness was checked against the official `evaluate.py` on
 
 ### 2.3 Real-time performance
 
-Measured with a dedicated streaming benchmark that times the **full** pipeline per window — proposal, feature extraction, both learned models, NMS, confidence gating, top-K and box regression — over five independent repetitions, excluding 20 warmup windows per sequence.
+Latency was measured with a dedicated streaming benchmark that times the full per-window pipeline — proposal, feature extraction, both learned models, NMS, confidence gating, top-K and box regression — over five independent repetitions, discarding 20 warm-up windows per sequence.
 
-| Compute p99 per window | Sequences |
-|---|---|
-| < 40 ms | **18 of 21** (nominal) |
-| < 40 ms, excluding runs with σ > 25% of mean | **17 of 21** |
-| < 40 ms, training split | **15 of 17**, up from 6 of 17 |
+**Measurement hardware, stated plainly.** Neither machine available to us is the evaluation platform. Machine A is an Intel Core i5-7200U (2 cores, 15 W, Kaby Lake); Machine B an Intel Core i7-10870H (8 cores, 45 W, Comet Lake, 16 MB L3). Both are Skylake-derived. The evaluation platform's i9-12900H uses Golden Cove cores with materially higher IPC at comparable frequency, so **every figure below is a conservative upper bound** on the latency the evaluator will observe. We make no compliance claim for hardware we have not measured.
 
-Best case is 14.99 +/- 0.1 ms (`DAVIS_Filtered_NOAA6`). Three sequences exceed the budget - `DVX_NOAA6` 84.67 ms, `EVK4_mag7.3` 77.76 ms and `EVK4_mag5.2` 58.73 ms - the two highest-resolution recordings and the densest DVX stream. `EVK4_mag7.3` has been the worst case in every measurement taken.
+On Machine B, across all 17 training sequences (commit `583f4bf`, 106,192 windows, 105,852 timed after warm-up):
 
-**Disclosure.** The 6-of-17 → 15-of-17 improvement is attributable to replacing a per-window-materialising static-source map with a constant-memory accumulator, **not** to the box regressor, whose marginal cost is two vectorised `predict()` calls per sequence. Process resident memory stays within 114.3–130.7 MB across all 21 sequences. Total container wall clock is 48.08 min (2,885.18 s), higher than the 23.26 min baseline: the constant-memory map trades total throughput for bounded memory and improved tail latency. Since Criterion 3 scores per-window latency and the container has no wall-clock constraint, we consider this the correct trade.
+| Criterion | Machine A (i5-7200U) | Machine B (i7-10870H) |
+|---|---|---|
+| Compute p99 < 40 ms | 15 of 17 | **17 of 17** |
+| Worst-case single window < 40 ms | 2 of 17 | **14 of 17** |
+| Windows exceeding 1,000 ms | 5 | **0** |
 
-**Latency semantics.** With one window of lookahead, end-to-end latency is one 40 ms window period plus compute. We report compute p99 because it determines whether the system keeps pace with the sensor - the window cost is inherent.
+Compute p99 on Machine B ranges from 4.93 ms (`DAVIS_Filtered_NOAA6`) to 31.34 ms (`EVK4_mag5.2`). The three sequences whose worst-case window exceeds budget do so by a narrow margin in two cases — 41.89 ms and 43.09 ms — and by 51.80 ms on `DVX_NOAA6`, the densest stream in the set. Both machines were measured natively on Windows at commit `583f4bf`; Machine A ran Python 3.11, Machine B Python 3.12.9. The four test-split sequences were not re-measured on Machine B.
+
+**End-to-end latency remains above budget on every sequence, by construction.** The detector consumes one window of lookahead, so end-to-end latency is exactly compute latency plus one 40 ms window period. No hardware can bring this below 40 ms. A causal variant removing the lookahead was implemented and evaluated: it reduced overall mAP by 16.1% and sparse-sequence mAP by 48.0%, and was rejected on accuracy grounds. Closing this gap without that penalty is the single most valuable item of future work, and we would rather state it than let it be inferred.
+
+**Per-sensor scaling.** An advance prediction that EVK4 sequences would gain disproportionately from Machine B's larger L3 cache was recorded before measurement and **failed**: EVK4 improved 1.98x against 2.87x for DAVIS. The observed EVK4 ratio instead tracks the memory-bandwidth ratio between the two machines (~1.38x), indicating that large-sensor cost is bandwidth-bound rather than cache-resident. We report the failed prediction because it corrects our cost model.
+
+**Disclosure.** The earlier 6-of-17 → 15-of-17 improvement on Machine A is attributable to replacing a per-window-materialising static-source map with a constant-memory accumulator, **not** to the box regressor, whose marginal cost is two vectorised `predict()` calls per sequence. Process resident memory stays within 114.3–130.7 MB across all 21 sequences.
 
 ### 2.4 Generalisation
 
@@ -94,6 +100,20 @@ Arm 2 captures **61.1%** of the available oracle gap. Arm 1 is retained as a neg
 
 Per-sensor, Arm 2 improves EVK4 0.612170 → 0.770544, DVX 0.121921 → 0.225114 and DAVIS 0.152401 → 0.228126. The EVK4 regressor head had no validation sequences in the holdout, which we note as the weakest point in the model documentation.
 
+**Alternative architectures.** Because the challenge names spiking and convolutional models as candidate approaches, we implemented both and measured them against the shipped design on identical windows and identical hardware (Machine A; all three arms on one machine, since cross-machine timings would not be comparable).
+
+| Arm | Model | Params | DAVIS | DVX | EVK4 |
+|---|---|---|---|---|---|
+| 0 | GBDT ensemble (shipped) | 47,214 | **7.15 ± 1.00 ms** | **9.70 ± 1.62 ms** | **30.93 ± 13.39 ms** |
+| 1 | Compact CNN | 60,549 | 26.34 ± 11.49 ms | 89.65 ± 15.20 ms | 278.44 ± 78.79 ms |
+| 2 | Spiking CNN (LIF) | 60,549 | 235.01 ± 28.06 ms | 855.20 ± 107.57 ms | 2,649.93 ± 296.77 ms |
+
+The CNN requires 69.97 M MACs per DAVIS window rising to 697.88 M on EVK4; the spiking variant needs ten sub-steps of the same dense computation. On CPU, neither is viable inside a 40 ms budget at the two larger resolutions, whereas the shipped ensemble fits at all three.
+
+The mechanism is a difference in how cost scales with sensor size. Against a pixel-count ratio of 1 : 3.42 : 10.25 across the three sensors, the CNN's cost scales with an exponent of **1.05** — essentially linear in pixels, as dense convolution must be — while the shipped pipeline scales at **0.63**, because its dominant per-candidate work is driven by the number of surviving components (22.6, 16.4 and 2.6 per window respectively) rather than by frame area. Sparse event data rewards an architecture whose cost follows occupancy, not resolution.
+
+We make no sparsity claim for the spiking arm. Its measured firing rate under random initialisation was 0.00%, so a spike-discounted operation count would be meaningless; the dense MAC figure is the only honest comparator, and a trained SNN would need to be re-measured before any efficiency claim could be made.
+
 ### 4.4 Visualisation and outputs
 
 A visualisation tool renders annotated video at all three sensor resolutions with ground-truth and predicted boxes, confidences and track identifiers. Predictions are tab-separated with a header row in the evaluator's field names, one row per detection, `class_id = 0` throughout - the challenge defines a single RSO class and we do not infer a taxonomy we cannot validate.
@@ -104,19 +124,37 @@ A visualisation tool renders annotated video at all three sensor resolutions wit
 <img src="experiments/frames/fig2_pipeline.png">
 **Figure 2.** The shipped pipeline; counts and AUCs are the measured values from sections 2 and 4.
 
+**Failure taxonomy.** Every one of the 15,292 ground-truth windows in the training split was classified against the shipped predictions, giving an exhaustive partition rather than a selected sample:
+
+| Outcome | Windows | Share |
+|---|---|---|
+| Correct (IoU ≥ 0.5) | 6,951 | 45.5% |
+| Missed entirely — no prediction emitted | 4,389 | 28.7% |
+| Localised but insufficient overlap (0 < IoU < 0.5) | 3,874 | 25.3% |
+| Predicted in the wrong place (IoU = 0) | 78 | 0.5% |
+
+The partition cross-validates against the reported counts: the three failure classes sum to 8,341, exactly the reported false-negative total. Median IoU in the localisation-failure class is 0.361 — these are near-misses against a hard 0.5 threshold, not gross errors.
+
+Tracing the 4,387 missed windows we could attribute (99.95% of the class; two windows in `EVK4_mag5.2` have ground truth extending past the end of the event recording) through the emission stages: **3,466 are discarded at the confidence floor** and 433 at the persistence requirement, while none are lost to top-K selection. Per-sensor confidence recalibration is therefore the largest single recoverable gain available, bounded by the precision cost at the current operating point of 0.58.
+
+**Training convergence.** All four learned heads were trained with early stopping and have converged: best validation iterations are 84 of 94 trees (candidate scorer), 125 of 135 (objectness gate), 71 and 67 (regressor width and height heads). Only the objectness gate remains within the band where additional capacity might help; for the other three, final validation loss is marginally worse than the best iteration, so tree count is not a free lever.
+
 Known failure modes, characterised rather than omitted:
 
-- **Compute p99 over budget.** `DVX_NOAA6` 84.67 ms, `EVK4_mag7.3` 77.76 ms and `EVK4_mag5.2` 58.73 ms: the densest and the two highest-resolution streams. Per-sensor decimation is the untested next lever.
+- **Worst-case latency above budget on the densest streams.** On Machine B three of 17 sequences exceed 40 ms in their slowest single window (41.89, 43.09, 51.80 ms) while all 17 hold p99 below budget. Per-sensor decimation is the untested next lever.
+- **End-to-end latency is structurally above budget.** One window of lookahead adds a fixed 40 ms. Removing it costs 16.1% of overall mAP and 48.0% on sparse sequences.
 - **Regressor holdout gap.** No EVK4 sequence sits in the validation holdout, so the EVK4 per-sensor gain is the least independently supported figure in this proposal.
 - **Sizing without centroid correction.** Arm 1 raised precision, recall and F1 yet lost mAP: 1,087 detections fell from IoU 0.50-0.55 to 0.40-0.49. Published rather than omitted.
 - **Sparse-sequence weakness.** The ten sequences with 43 ground-truth boxes or fewer remain the weakest regime; Arm 2 lifts mAP from 0.100600 to 0.226600, still below the dense-sequence 0.304353.
+- **Tracking is implemented but not integrated.** `src/tracker.py` ships in the image and assigns persistent identities, but is not called from the inference path, because the required nine-field output schema has no column for a track identifier. Emitting identities to a sidecar file is the correct fix and is not yet made.
+
 ## 5. Team Capacity
 
 This is a solo entry. The author is in the final semester of an MCA at D. Y. Patil Institute of MCA and Management, Pune (Savitribai Phule Pune University), following a BCA from the same university. From 1 December 2025 to 30 May 2026 he worked as an Applied AI Engineer at Ovva Tech, where he built an AI-driven recruitment platform (React/Next.js with a Flask backend) spanning MCQ, coding and interview assessment modules, including a proctoring subsystem migrated from a hosted vision API to local CPU-based OpenCV face detection.
 
 The measurement discipline this proposal relies on is demonstrable rather than asserted. The author's public continual-learning repository operates under eleven standing experimental rules, among them a permanent do-nothing control arm in every comparison, five-seed mean and standard deviation reporting with no single-draw figure permitted in any table, and a paste-only rule requiring every reported count to be a verbatim log excerpt carrying its commit SHA. Under that protocol a train/test contamination fault was identified in the author's own evaluation path, and three previously published accuracy figures were publicly retracted rather than quietly corrected.
 
-The same protocol governs OrbitSight. Arm 0 is retained as a do-nothing control, the failed Arm 1 result is published rather than omitted, every configuration is recorded in a committed ledger with its commit SHA, and all reported metrics agree with the official evaluator to within 5.55e-17.
+The same protocol governs OrbitSight. Arm 0 is retained as a do-nothing control, the failed Arm 1 result is published rather than omitted, every configuration is recorded in a committed ledger with its commit SHA, and all reported metrics agree with the official evaluator to within 5.55e-17. The cache-locality prediction in section 2.3 was recorded in advance, failed on measurement, and is reported as a failure.
 
 ## 6. Prior Work
 
