@@ -5,7 +5,7 @@
 
 Neuromorphic vision sensors observing resident space objects produce sparse, asynchronous event streams in which a target may generate only a handful of events per 40 ms window, embedded in star fields, hot pixels and sensor noise. The problem is not classification capacity — it is **ranking a very small number of true detections above a very large number of plausible noise components**, under a strict IoU ≥ 0.5 requirement, in real time, on CPU.
 
-OrbitSight is a four-pass event-native pipeline: connected-component candidate proposal on per-window event count maps, a learned candidate scorer over 13 geometric and temporal features, a learned window-level objectness gate over 21 features spanning three consecutive windows, and a post-hoc bounding-box regressor that corrects box dimensions without disturbing detection ranking. It is delivered as a self-contained offline Docker image: it reads `/OrbitSight_dataset`, requires no network, and writes conformant `.txt` predictions plus `Evaluation_Metrics.xlsx` to `/work/OrbitAI/DDMMYYYY`. Six end-to-end runs have produced identical detection counts, and the three runs of the shipped configuration identical mAP to six decimals.
+OrbitSight is a four-pass event-native pipeline: connected-component candidate proposal on per-window event count maps, a learned candidate scorer over 13 geometric and temporal features, a learned window-level objectness gate over 21 features spanning three consecutive windows, and a post-hoc bounding-box regressor that corrects box dimensions without disturbing detection ranking. It is delivered as a self-contained offline Docker image: it reads `/OrbitSight_dataset`, requires no network, and writes conformant `.txt` predictions plus `Evaluation_Metrics.xlsx` to `/work/OrbitAI/DDMMYYYY`.
 
 ## 2. Outcome Metrics
 
@@ -23,7 +23,7 @@ Configuration selection used the 17 training sequences exclusively. The four tes
 
 ### 2.2 Real-time performance
 
-Latency was measured with a dedicated streaming benchmark that times the full per-window pipeline — proposal, feature extraction, both learned models, NMS, confidence gating, top-K and box regression — over five independent repetitions, discarding 20 warm-up windows per sequence.
+Latency was measured with a dedicated streaming benchmark timing the full per-window pipeline — proposal, feature extraction, both learned models, NMS, confidence gating, top-K and box regression — over five repetitions, discarding 20 warm-up windows per sequence.
 
 **Neither machine available to us is the evaluation platform.** Machine A is an Intel Core i5-7200U (2 cores, 15 W, Kaby Lake); Machine B an Intel Core i7-10870H (8 cores, 45 W, Comet Lake, 16 MB L3). Both are Skylake-derived. The evaluation platform's i9-12900H uses Golden Cove cores with materially higher IPC at comparable frequency, so **every figure below is a conservative upper bound** on the latency the evaluator will observe. We make no compliance claim for hardware we have not measured.
 
@@ -45,7 +45,7 @@ The box regressor converts false positives into true positives at almost identic
 
 ## 3. Value Proposition and Competitive Positioning
 
-**Every number is reproducible, and the artifact is the evidence.** The container has been run six times with identical detection counts, the image is built from the exact commit in the repository, and in-process metrics agree with the official evaluator to 5.55e-17. Two configurations that improved precision, recall and F1 while *reducing* mAP were diagnosed rather than shipped; that diagnosis — the metric was ranking-limited, not recall-limited — produced the +49.1% gain in all-21 mAP.
+**Every number is reproducible, and the artifact is the evidence.** Six container runs produced identical detection counts, the image is built from the exact commit in the repository, and in-process metrics agree with the official evaluator to 5.55e-17. Two configurations that improved precision, recall and F1 while *reducing* mAP were diagnosed rather than shipped; that diagnosis — the metric was ranking-limited, not recall-limited — produced the +49.1% gain in all-21 mAP.
 
 **CPU-only and genuinely offline.** Three gradient-boosted tree models totalling 1.5 MB, eight pinned dependencies, no GPU, no network, sub-second cold start — a deployable configuration on the stated evaluation hardware, not a prototype requiring accelerators.
 
@@ -58,13 +58,13 @@ The box regressor converts false positives into true positives at almost identic
 <img src="experiments/frames/fig2_pipeline.png">
 **Figure 1.** The shipped pipeline; counts and AUCs are the measured values reported here.
 
-**Pass 1 — proposal.** Events in each 40 ms window are accumulated into a count map. Adaptive percentile thresholding escalates with window density (capped at 99.0) so bright frames do not flood the component stage. `cv2.connectedComponentsWithStats` yields components, ranked by event count and truncated, with oversized ones re-thresholded and split. A continuous static-source map — the fraction of windows in which each pixel is active — suppresses stars and hot pixels.
+**Pass 1 — proposal.** Events in each 40 ms window are accumulated into a count map. Adaptive percentile thresholding escalates with window density (capped at 99.0), `cv2.connectedComponentsWithStats` yields components ranked by event count and truncated, and oversized components are re-thresholded and split. A continuous static-source map — the fraction of windows in which each pixel is active — suppresses stars and hot pixels.
 
-**Pass 2 — candidate scoring.** Candidates are matched to the previous and next windows by centroid distance to produce a persistence count; single-window candidates are dropped. Thirteen features per candidate (event count, density, area, extents, aspect, persistence, displacements, speed, direction consistency, static fraction, local background) feed a HistGradientBoostingClassifier trained on 944,504 candidates, validation ROC-AUC 0.930.
+**Pass 2 — candidate scoring.** Candidates are matched to adjacent windows by centroid distance to give a persistence count; single-window candidates are dropped. Thirteen features spanning geometry, motion and local context feed a HistGradientBoostingClassifier trained on 944,504 candidates, validation ROC-AUC 0.930.
 
-**Pass 3 — window objectness.** A 21-dimensional feature vector spanning the previous, current and next windows drives a second classifier estimating whether a window contains a real object at all; candidate confidences are multiplied by this probability. Validation ROC-AUC 0.889, PR-AUC 0.921 against a 0.60 trivial baseline.
+**Pass 3 — window objectness.** A 21-dimensional vector spanning the previous, current and next windows drives a second classifier estimating whether a window contains a real object at all; candidate confidences are multiplied by this probability. Validation ROC-AUC 0.889, PR-AUC 0.921 against a 0.60 trivial baseline.
 
-**Pass 4 — emission and box regression.** Per-window NMS, a confidence floor, top-K selection, then post-hoc box regression, rounding and clamping.
+**Pass 4 — emission.** Per-window NMS, a confidence floor, top-K selection, then post-hoc box regression, rounding and clamping.
 
 ### 4.2 The central design decision
 
@@ -81,7 +81,7 @@ An oracle profiler substituting ground-truth box dimensions at fixed ranking est
 | 2 | **Dual log-HGBR (shipped)** | **0.258616** | 6,951 | 5,029 | 2,302 | 411 |
 | — | Oracle (GT dims) | 0.318067 | 8,426 | 3,554 | 3,398 | 32 |
 
-Arm 2 captures **61.1%** of the available oracle gap. Arm 1 is retained as a negative result: it raised precision, recall and F1 yet *reduced* mAP, because shrinking boxes to correct average dimensions without correcting centroid offset pushed 1,087 detections from IoU 0.50–0.55 down to 0.40–0.49, and those losses fell on higher-ranked detections than the gains. Per-sensor, Arm 2 improves EVK4 0.612170 → 0.770544, DVX 0.121921 → 0.225114 and DAVIS 0.152401 → 0.228126.
+Arm 2 captures **61.1%** of the available oracle gap. Arm 1 is retained as a negative result: it raised precision, recall and F1 yet *reduced* mAP, because correcting average dimensions without correcting centroid offset pushed 1,087 detections from IoU 0.50–0.55 down to 0.40–0.49, and those losses fell on higher-ranked detections than the gains. Per-sensor, Arm 2 improves EVK4 0.612170 → 0.770544, DVX 0.121921 → 0.225114 and DAVIS 0.152401 → 0.228126.
 
 **Alternative architectures.** Because the challenge names spiking and convolutional models as candidate approaches, we implemented both and measured them against the shipped design on identical windows and identical hardware (Machine A throughout; cross-machine timings would not be comparable).
 
@@ -126,7 +126,6 @@ The three failure classes sum to 8,341, exactly the reported false-negative tota
 Known limitations, characterised rather than omitted:
 
 - **Worst-case latency** exceeds 40 ms on 3 of 17 sequences while all 17 hold p99 below budget. Per-sensor decimation is the untested next lever.
-- **End-to-end latency is structurally above budget** by one 40 ms window of lookahead; removing it costs 16.1% of overall mAP.
 - **Regressor holdout gap.** No EVK4 sequence sits in the validation holdout, so the EVK4 per-sensor gain is the least independently supported figure here.
 - **Sparse-sequence weakness.** The ten sparse sequences remain the weakest regime at 0.226600 against 0.304353 on dense sequences.
 - **Tracking is implemented but not integrated.** `src/tracker.py` ships in the image and assigns persistent identities, but is not called from the inference path, because the required nine-field output schema has no column for a track identifier. Emitting identities to a sidecar file is the correct fix and is not yet made.
@@ -135,16 +134,16 @@ Known limitations, characterised rather than omitted:
 
 This is a solo entry. The author is in the final semester of an MCA at D. Y. Patil Institute of MCA and Management, Pune (Savitribai Phule Pune University), following a BCA from the same university. From December 2025 to May 2026 he worked as an Applied AI Engineer at Ovva Tech, building an AI-driven recruitment platform whose proctoring subsystem was migrated from a hosted vision API to local CPU-based OpenCV face detection — the same offline, CPU-only constraint this challenge imposes.
 
-The capacity that matters for this problem is measurement discipline, and it is demonstrable rather than asserted. The author's public continual-learning repository operates under eleven standing experimental rules, among them a permanent do-nothing control arm in every comparison, five-seed mean and standard deviation reporting with no single-draw figure permitted in any table, and a paste-only rule requiring every reported count to be a verbatim log excerpt carrying its commit SHA. Under that protocol a train/test contamination fault was identified in the author's own evaluation path, and three previously published accuracy figures were publicly retracted rather than quietly corrected.
+The capacity that matters here is measurement discipline, demonstrable rather than asserted. The author's public continual-learning repository operates under eleven standing experimental rules — among them a permanent do-nothing control arm in every comparison, five-seed mean and standard deviation reporting, and a paste-only rule requiring every reported count to be a verbatim log excerpt carrying its commit SHA. Under that protocol a train/test contamination fault was found in the author's own evaluation path, and three published accuracy figures were publicly retracted rather than quietly corrected.
 
-The same protocol governs OrbitSight, and this document is its output. Arm 0 is retained as a do-nothing control; the failed Arm 1 result is published rather than omitted; the cache-locality prediction in section 2.2 was recorded in advance, failed on measurement, and is reported as a failure; the unintegrated tracker is disclosed in section 4.5; every configuration is recorded in a committed ledger with its commit SHA; and all reported metrics agree with the official evaluator to within 5.55e-17. Solo capacity is bounded, and this proposal states where those bounds fall rather than concealing them.
+The same protocol governs OrbitSight. Arm 0 is retained as a do-nothing control; the failed Arm 1 result is published rather than omitted; the cache-locality prediction in section 2.2 was recorded in advance, failed on measurement, and is reported as a failure; the unintegrated tracker is disclosed in section 4.5; and all reported metrics agree with the official evaluator to within 5.55e-17. Solo capacity is bounded, and this proposal states where those bounds fall.
 
 ## 6. Prior Work
 
 Three public repositories predate this challenge, which the author learned of on 16 July 2026. Each transfers a specific capability.
 
-**AirWrite** (first commit 19 December 2025) is a real-time computer-vision application in Python using OpenCV and MediaPipe: webcam capture, per-frame hand-landmark detection, temporal smoothing for tracking stability, and a gesture state machine driving on-screen interaction. It is the direct antecedent of OrbitSight's per-window detection with cross-window temporal association.
+**AirWrite** (first commit 19 December 2025) is a real-time computer-vision application in Python using OpenCV and MediaPipe: webcam capture, per-frame hand-landmark detection, temporal smoothing for tracking stability, and a gesture state machine. It is the direct antecedent of OrbitSight's per-window detection with cross-window temporal association.
 
-**Automated Recruitment System** (begun May 2026) ships with a project report, test plan, data-flow and class diagrams, and a CSV test-case matrix — the documentation practice this proposal and the repository README follow. Its proctoring module was deliberately migrated from a hosted vision API to local OpenCV face detection on CPU, the direct antecedent of the offline CPU-only constraint met here.
+**Automated Recruitment System** (begun May 2026) ships with a project report, test plan, data-flow and class diagrams, and a CSV test-case matrix — the documentation practice this proposal follows. Its proctoring module was deliberately migrated from a hosted vision API to local OpenCV face detection on CPU, the direct antecedent of the offline CPU-only constraint met here.
 
-**Neural-Networks** (from 14 April 2026) is a continual-learning research codebase in which a custom architecture was built, evaluated against transformer baselines, and then measured against standard protocols. Those measurements did not support the architecture: joint offline training was found to lose to no training at all on the internal benchmark (adaptation gap −6.00 pp), so the benchmark was retired and the work moved to Split-CIFAR-100 with Class-IL R[t,i] matrix evaluation and orthogonal gradient projection. The repository retains the negative results and the retractions in full, and is the origin of the experimental protocol described in section 5. Development uses a branch-and-pull-request workflow; implementation is agent-executed under the author's direction, with experiment design, protocol rules and verification retained by the author.
+**Neural-Networks** (from 14 April 2026) is a continual-learning research codebase in which a custom architecture was built and evaluated against transformer baselines under standard protocols. Those measurements did not support the architecture — joint offline training lost to no training at all on the internal benchmark (adaptation gap −6.00 pp) — so the benchmark was retired and the work moved to Split-CIFAR-100 with Class-IL R[t,i] matrix evaluation and orthogonal gradient projection. The repository retains the negative results and the retractions in full, and is the origin of the protocol described in section 5. Implementation is agent-executed under the author's direction, with experiment design, protocol rules and verification retained by the author.
