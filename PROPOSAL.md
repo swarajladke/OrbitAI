@@ -97,15 +97,12 @@ The mechanism is how cost scales with sensor size. Against a pixel-count ratio o
 
 ### 4.4 Visualisation and outputs
 
-A visualisation tool renders annotated video at all three sensor resolutions with ground-truth and predicted boxes, confidences and track identifiers. Predictions are tab-separated with a header row in the evaluator's field names, `class_id = 0` throughout — the challenge defines a single RSO class and we do not infer a taxonomy we cannot validate.
-
-<img src="experiments/frames/fig1.png">
-**Figure 2.** EVK4 window, cropped. Green: ground truth. Orange: prediction with confidence and track ID. Rendered by `src/visualize.py`, which ships inside the submitted image.
+A visualisation tool (`src/visualize.py`, shipped inside the submitted image) renders annotated video at all three sensor resolutions with ground-truth and predicted boxes, confidences and track identifiers; Figure 3 below is rendered by it. Predictions are tab-separated with a header row in the evaluator's field names, `class_id = 0` throughout — the challenge defines a single RSO class and we do not infer a taxonomy we cannot validate.
 
 ### 4.5 Convergence and failure modes
 
 <img src="experiments/frames/fig3_training_curves.png">
-**Figure 3.** Training and validation curves for all four learned heads. Markers show the best validation iteration selected by early stopping.
+**Figure 2.** Training and validation curves for all four learned heads. Markers show the best validation iteration selected by early stopping.
 
 All four heads were trained with early stopping and have converged: best validation iterations are 84 of 94 trees (candidate scorer), 125 of 135 (objectness gate), 71 and 67 (regressor width and height heads). Only the objectness gate remains within the band where additional capacity might help.
 
@@ -119,7 +116,7 @@ Every one of the 15,292 ground-truth windows in the training split was classifie
 | Predicted in the wrong place (IoU = 0) | 78 | 0.5% |
 
 <img src="experiments/frames/fig4_failures.png">
-**Figure 4.** One representative window per failure class: (a) missed detection, `DAVIS_COSMOS1933`; (b) localisation failure at IoU 0.361, `EVK4_mag5.2`; (c) mislocated prediction, `DAVIS_EGS_16908`.
+**Figure 3.** One representative window per failure class, green for ground truth and orange for prediction: (a) missed detection, `DAVIS_COSMOS1933`; (b) localisation failure at IoU 0.361, `EVK4_mag5.2`; (c) mislocated prediction, `DAVIS_EGS_16908`.
 
 The three failure classes sum to 8,341, exactly the reported false-negative total. Median IoU in the localisation class is 0.361 — near-misses against a hard 0.5 threshold, not gross errors. Of the 4,387 missed windows we could attribute (99.95% of the class), **3,466 are discarded at the confidence floor** and 433 at the persistence requirement, while none are lost to top-K. Per-sensor confidence recalibration is therefore the largest single recoverable gain, bounded by the precision cost at the current 0.58 operating point.
 
