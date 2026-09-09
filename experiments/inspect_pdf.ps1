@@ -2,17 +2,17 @@ $word = New-Object -ComObject Word.Application
 $word.Visible = $false
 $doc = $word.Documents.Open("C:\Users\Vicky\Desktop\OrbitSight\OrbitSight_Research\PROPOSAL.html")
 
-# 0.8-inch margins (57.6 pt)
-$doc.PageSetup.TopMargin = 57.6
-$doc.PageSetup.BottomMargin = 57.6
-$doc.PageSetup.LeftMargin = 57.6
-$doc.PageSetup.RightMargin = 57.6
+# 0.55-inch margins (39.6 pt)
+$doc.PageSetup.TopMargin = 39.6
+$doc.PageSetup.BottomMargin = 39.6
+$doc.PageSetup.LeftMargin = 39.6
+$doc.PageSetup.RightMargin = 39.6
 
 # Paragraph spacing
 foreach ($p in $doc.Paragraphs) {
     if ($p.Range.Tables.Count -eq 0) {
         $p.SpaceBefore = 0
-        $p.SpaceAfter = 3
+        $p.SpaceAfter = 4
         $p.LineSpacingRule = 0 # wdLineSpaceSingle
     }
 }
@@ -28,7 +28,7 @@ foreach ($table in $doc.Tables) {
         $row.AllowBreakAcrossPages = 0
     }
     $table.Rows.Item(1).HeadingFormat = -1
-    $table.Range.Font.Size = 9.5
+    $table.Range.Font.Size = 8.5
 
     $paras = $table.Range.Paragraphs
     $n = $paras.Count

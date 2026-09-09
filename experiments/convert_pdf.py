@@ -96,30 +96,30 @@ html_template = """<!DOCTYPE html>
 <style>
 @page {
     size: letter;
-    margin: 0.8in;
+    margin: 0.55in;
 }
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    font-size: 10pt;
-    line-height: 1.0;
+    font-size: 9.5pt;
+    line-height: 1.05;
     color: #111;
     margin: 0;
     padding: 0;
 }
 h1 {
-    font-size: 13pt;
+    font-size: 12pt;
     font-weight: 700;
     margin-top: 0pt;
-    margin-bottom: 3pt;
+    margin-bottom: 2.5pt;
     page-break-after: avoid;
     color: #0b2545;
     line-height: 1.1;
 }
 h2 {
-    font-size: 11pt;
+    font-size: 10pt;
     font-weight: 700;
-    margin-top: 6pt;
-    margin-bottom: 3pt;
+    margin-top: 5pt;
+    margin-bottom: 2.5pt;
     border-bottom: 1px solid #ddd;
     padding-bottom: 1px;
     page-break-after: avoid;
@@ -127,9 +127,9 @@ h2 {
     line-height: 1.1;
 }
 h3 {
-    font-size: 10pt;
+    font-size: 9.5pt;
     font-weight: 600;
-    margin-top: 5pt;
+    margin-top: 4pt;
     margin-bottom: 2pt;
     page-break-after: avoid;
     color: #205072;
@@ -137,9 +137,9 @@ h3 {
 }
 p {
     margin-top: 0pt;
-    margin-bottom: 3pt;
+    margin-bottom: 4pt;
     text-align: justify;
-    line-height: 1.0;
+    line-height: 1.05;
 }
 p.pstart {
     text-indent: 14pt;
@@ -160,7 +160,7 @@ table {
     page-break-inside: avoid;
     margin-top: 4pt;
     margin-bottom: 4pt;
-    font-size: 9.5pt;
+    font-size: 8.5pt;
     line-height: 1.0;
 }
 tr, td, th {
@@ -170,7 +170,7 @@ th, td {
     border: 1px solid #bbb;
     padding: 2.5pt 4.5pt;
     text-align: left;
-    font-size: 9.5pt;
+    font-size: 8.5pt;
     line-height: 1.0;
 }
 th {
